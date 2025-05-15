@@ -154,7 +154,7 @@ data Term
   | TS Sub
   deriving (Eq, Show, Ord)
 
-main = quickCheckWith stdArgs{ maxSuccess = 10000 } prop_Confluent1
+main = quickCheckWith stdArgs{ maxSuccess = 10000 } prop_Confluent
 
 prop_Terminates e =
   whenFail (
@@ -172,22 +172,6 @@ printTrace t = go 1 t
                 t':_ -> do putStrLn "-->"
                            go (n+1) t'
                 []   -> return ()
-
-prop_Confluent0 (Blind e) =
-  whenFail (
-    do putStrLn ("t0: " ++ show t0)
-       putStrLn ("t1: " ++ show t1)
-       putStrLn ("t2: " ++ show t2)    
-  ) (null t2s)
- where
-  t0  = TE e
-  t1  = norm t0
-  ts' = step t1
-  t2s@(~(t2:_)) = filter (t1/=) (map norm ts')
-  
-  norm t = case step t of
-             []   -> t
-             t':_ -> norm t'
 
 data Fork = Fork [Term] deriving ( Eq, Ord )
 
@@ -217,7 +201,7 @@ instance Arbitrary Fork where
    where
     k = length ts `div` 2
 
-prop_Confluent1 (Blind (Fork ts)) =
+prop_Confluent (Blind (Fork ts)) =
   whenFail (
     do putStrLn "==TRACE#1=="
        printTrace (head ts)
