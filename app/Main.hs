@@ -86,6 +86,10 @@ data Ren
   | CompRR Ren Ren -- _⨟ᵣᵣ_
   deriving (Eq, Show, Ord)
 
+-- Lifting for renamings _↑ᵣ_
+liftRen :: Ren -> Ren
+liftRen r = ConsR Z (CompRR r WkR)
+
 arbRen :: Int -> Gen Ren
 arbRen n = frequency
   [ (1, return IdR)
@@ -117,6 +121,10 @@ data Sub
   | CompSR Sub Ren -- _⨟ₛᵣ_
   | CompSS Sub Sub -- _⨟ₛₛ_
   deriving (Eq, Show, Ord)
+
+-- Lifting for substitutions ↑ₛ
+liftSub :: Sub -> Sub
+liftSub s = ConsS (VarE Z) (CompSR s WkR)
 
 arbSub :: Int -> Gen Sub
 arbSub n = frequency
@@ -152,6 +160,7 @@ data Term
   = TE Expr
   | TR Ren
   | TS Sub
+  | TV Var  
   deriving (Eq, Show, Ord)
 
 main = quickCheckWith stdArgs{ maxSuccess = 10000 } prop_Confluent
@@ -363,27 +372,27 @@ trySubApp (TE (SubE (App e1 e2) s)) = [TE (App (SubE e1 s) (SubE e2 s))]
 trySubApp _ = []
 
 tryLookupRConsZ :: Term -> [Term]
-tryLookupRConsZ (TE (VarE (LookupR (ConsR x _) Z))) = [TE (VarE x)]
+tryLookupRConsZ (TV (LookupR (ConsR x _) Z)) = [TV x]  
 tryLookupRConsZ _ = []
 
 tryLookupRConsS :: Term -> [Term]
-tryLookupRConsS (TE (VarE (LookupR (ConsR _ r) (S x')))) = [TE (VarE (LookupR r x'))]
+tryLookupRConsS (TV (LookupR (ConsR _ r) (S x'))) = [TV (LookupR r x')]  
 tryLookupRConsS _ = []
 
 tryLookupRId :: Term -> [Term]
-tryLookupRId (TE (VarE (LookupR IdR x))) = [TE (VarE x)]
+tryLookupRId (TV (LookupR IdR x)) = [TV x] 
 tryLookupRId _ = []
 
 tryLookupRWk :: Term -> [Term]
-tryLookupRWk (TE (VarE (LookupR WkR x))) = [TE (VarE (S x))]
+tryLookupRWk (TV (LookupR WkR x)) = [TV (S x)]  
 tryLookupRWk _ = []
 
 tryConsRDef1 :: Term -> [Term]
-tryConsRDef1 (TE (VarE (LookupR (ConsR x _) Z))) = [TE (VarE x)]
+tryConsRDef1 (TV (LookupR (ConsR x _) Z)) = [TV x]
 tryConsRDef1 _ = []
 
 tryConsRDef2 :: Term -> [Term]
-tryConsRDef2 (TE (VarE (LookupR (ConsR _ r) (S x')))) = [TE (VarE (LookupR r x'))]
+tryConsRDef2 (TV (LookupR (ConsR _ r) (S x'))) = [TV (LookupR r x')]
 tryConsRDef2 _ = []
 
 tryLookupSConsZ :: Term -> [Term]
@@ -407,7 +416,7 @@ tryConsSDef2 (TE (LookupS (ConsS _ s) (S x))) = [TE (LookupS s x)]
 tryConsSDef2 _ = []
 
 tryCompRRDef :: Term -> [Term]
-tryCompRRDef (TE (VarE (LookupR (CompRR r1 r2) x))) = [TE (VarE (LookupR r2 (LookupR r1 x)))]
+tryCompRRDef (TV (LookupR (CompRR r1 r2) x)) = [TV (LookupR r2 (LookupR r1 x))]
 tryCompRRDef _ = []
 
 tryCompRSDef :: Term -> [Term]
@@ -553,12 +562,19 @@ tryCoincidence _ = []
 -- | Compute rewrites in subterms (context closure)
 stepContext :: Term -> [Term]
 stepContext t = case t of
-  -- Recursive cases for expressions
-  TE (VarE Z) -> []
-  TE (VarE (S v)) -> [TE (VarE (S v')) | v' <- stepVar v]
-  TE (VarE (LookupR r x)) ->
-    [TE (VarE (LookupR r' x)) | TR r' <- step (TR r)] ++
-    [TE (VarE (LookupR r x')) | x' <- stepVar x]
+  -- Cases for variables
+  TV Z -> []
+
+  TV (S x) -> 
+    [TV (S x') | TV x' <- step (TV x)]
+
+  TV (LookupR r x) -> 
+    [TV (LookupR r' x)  | TR r' <- step (TR r)] ++ 
+    [TV (LookupR r x')  | TV x' <- step (TV x)]
+
+  -- Cases for expressions
+  TE (VarE x) -> 
+    [TE (VarE x') | TV x' <- step (TV x)]
 
   TE (Lam e) ->
     [TE (Lam e') | TE e' <- step (TE e)]
@@ -577,21 +593,21 @@ stepContext t = case t of
 
   TE (LookupS s x) ->
     [TE (LookupS s' x) | TS s' <- step (TS s)] ++
-    [TE (LookupS s x') | x' <- stepVar x]
+    [TE (LookupS s x') | TV x' <- step (TV x)]
 
-  -- Recursive cases for renamings
+  -- Cases for renamings
   TR IdR -> []
   TR WkR -> []
 
   TR (ConsR v r) ->
-    [TR (ConsR v' r) | v' <- stepVar v] ++
+    [TR (ConsR v' r) | TV v' <- step (TV v)] ++
     [TR (ConsR v r') | TR r' <- step (TR r)]
 
   TR (CompRR r1 r2) ->
     [TR (CompRR r1' r2) | TR r1' <- step (TR r1)] ++
     [TR (CompRR r1 r2') | TR r2' <- step (TR r2)]
 
-  -- Recursive cases for substitutions
+  -- Cases for substitutions
   TS IdS -> []
 
   TS (ConsS e s) ->
@@ -610,21 +626,6 @@ stepContext t = case t of
     [TS (CompSS s1' s2) | TS s1' <- step (TS s1)] ++
     [TS (CompSS s1 s2') | TS s2' <- step (TS s2)]
 
--- Helper function for context closure in variables
-stepVar :: Var -> [Var]
-stepVar v = case v of
-  Z -> []
-  S v' -> [S v'' | v'' <- stepVar v']
-  LookupR r x ->
-    [LookupR r' x | TR r' <- step (TR r)] ++
-    [LookupR r x' | x' <- stepVar x]
-
--- Lifting for renamings and substitutions (↑ᵣ and ↑ₛ)
-liftRen :: Ren -> Ren
-liftRen r = ConsR Z (CompRR r WkR)
-
-liftSub :: Sub -> Sub
-liftSub s = ConsS (VarE Z) (CompSR s WkR)
 
 
 -- | Debug function to trace reductions
