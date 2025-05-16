@@ -45,6 +45,7 @@ arbExpr n = frequency
   [ (1, fmap VarE (arbVar n))
   , (n, fmap Lam (arbExpr n1))
   , (n, liftM2 App (arbExpr n2) (arbExpr n2))
+  , (n, liftM2 RenE (arbExpr n2) (arbRen n2))
   , (n, liftM2 SubE (arbExpr n2) (arbSub n2))
   , (n, liftM2 LookupS (arbSub n2) (arbVar n))
   ]
